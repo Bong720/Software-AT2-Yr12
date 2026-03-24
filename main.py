@@ -2,6 +2,7 @@ import os
 import sys
 import sqlite3
 import subprocess
+from datetime import datetime
 from flask import Flask, render_template, request, redirect, session
 from flask_cors import CORS
 import user_management as db
@@ -62,6 +63,14 @@ def is_password_strong(password):
         return False
     return True
 
+def is_valid_date(date_str):
+    """Check if the date string is a valid date in DD/MM/YYYY format."""
+    try:
+        datetime.strptime(date_str, '%d/%m/%Y')
+        return True
+    except ValueError:
+        return False
+
 # ── Home / Login ──────────────────────────────────────────────────────────────
 
 @app.route("/", methods=["POST", "GET"])
@@ -106,6 +115,8 @@ def signup():
         bio      = request.form.get("bio", "")
         if not is_password_strong(password):
             return render_template("signup.html", msg="Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, and one digit.")
+        if not is_valid_date(DoB):
+            return render_template("signup.html", msg="Please enter a valid date of birth in DD/MM/YYYY format.")
         db.insertUser(username, password, DoB, bio)
         return render_template("index.html", msg="Account created! Please log in.")
     else:
