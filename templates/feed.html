@@ -12,9 +12,9 @@
       <div class="profile-handle">@{{ username | lower }}</div>
       <br/>
       <div class="sidebar-links">
-        <a href="/profile?user={{ username }}">&#128100; My Profile</a>
-        <a href="/messages?user={{ username }}">&#128140; Messages</a>
-        <a href="/">&#128682; Log Out</a>
+        <a href="/profile">&#128100; My Profile</a>
+        <a href="/messages">&#128140; Messages</a>
+        <a href="/logout">&#128682; Log Out</a>
       </div>
     </div>
 
@@ -75,13 +75,10 @@
           {% endif %}
         </div>
         <!--
-          VULNERABILITY: Stored XSS
-          Post content is rendered with |safe — auto-escaping is disabled.
-          Any user can post <script>alert(document.cookie)</script> and it will
-          execute in the browser of EVERY user who loads the feed page.
-          The payload is permanently stored in the database.
+          Post content is now sanitized on input to prevent XSS attacks.
+          Basic HTML tags like <b>, <i>, <p> are allowed for formatting.
         -->
-        <div class="post-content">{{ post[2] | safe }}</div>
+        <div class="post-content">{{ post[2] }}</div>
       </div>
       {% endfor %}
     {% else %}

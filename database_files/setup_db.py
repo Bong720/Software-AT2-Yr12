@@ -1,5 +1,7 @@
 import sqlite3
 import os
+import bcrypt
+import bleach
 
 # Always resolve path relative to THIS file — works from any working directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,7 +16,7 @@ cur = con.cursor()
 
 # ── Create Tables ──────────────────────────────────────────────────────────────
 
-# VULNERABILITY: No password hashing — passwords stored in plaintext
+# Passwords are now hashed with bcrypt
 cur.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,12 +49,12 @@ cur.execute('''
 
 # ── Seed Users ─────────────────────────────────────────────────────────────────
 users = [
-    ('admin',      'password123',  '01/01/1990', 'Site administrator. Here to keep things running.', 'admin'),
-    ('GamerGirl',  'qwerty',       '15/05/2002', 'Casual gamer | Indie titles and retro consoles.', 'user'),
-    ('TechNerd42', 'letmein',      '22/08/1998', 'Software dev by day, CTF player by night. Python fan.', 'user'),
-    ('CryptoKing', 'blockchain1',  '09/03/1995', 'Bitcoin maximalist. Not financial advice.', 'user'),
-    ('Sarah_J',    'ilovecats99',  '30/11/2001', 'Cat mum | Photography student | She/Her', 'user'),
-    ('x0_h4ck3r',  'supersecret!', '14/02/1999', "Security researcher. I find bugs so you don't have to.", 'user'),
+    ('admin',      bcrypt.hashpw('password123'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),  '01/01/1990', bleach.clean('Site administrator. Here to keep things running.', tags=[], strip=True), 'admin'),
+    ('GamerGirl',  bcrypt.hashpw('qwerty'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),       '15/05/2002', bleach.clean('Casual gamer | Indie titles and retro consoles.', tags=[], strip=True), 'user'),
+    ('TechNerd42', bcrypt.hashpw('letmein'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),      '22/08/1998', bleach.clean('Software dev by day, CTF player by night. Python fan.', tags=[], strip=True), 'user'),
+    ('CryptoKing', bcrypt.hashpw('blockchain1'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),  '09/03/1995', bleach.clean('Bitcoin maximalist. Not financial advice.', tags=[], strip=True), 'user'),
+    ('Sarah_J',    bcrypt.hashpw('ilovecats99'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),  '30/11/2001', bleach.clean('Cat mum | Photography student | She/Her', tags=[], strip=True), 'user'),
+    ('x0_h4ck3r',  bcrypt.hashpw('supersecret!'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'), '14/02/1999', bleach.clean("Security researcher. I find bugs so you don't have to.", tags=[], strip=True), 'user'),
 ]
 
 cur.executemany(

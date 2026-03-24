@@ -2,6 +2,8 @@ import sqlite3 as sql
 import time
 import random
 import os
+import bcrypt
+import bleach
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  user_management.py
@@ -9,10 +11,9 @@ import os
 #
 #  INTENTIONAL VULNERABILITIES (for educational use):
 #    1. SQL Injection      — f-string queries throughout
-#    2. Plaintext passwords — no hashing applied at any point
-#    3. Timing side-channel — sleep only fires when username EXISTS
-#    4. No input validation — any string accepted as username/password
-#    5. IDOR-equivalent    — username passed from client-side hidden field
+#    2. Timing side-channel — sleep only fires when username EXISTS
+#    3. No input validation — any string accepted as username/password
+#    4. IDOR-equivalent    — username passed from client-side hidden field
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Absolute paths — works regardless of where `python main.py` is called from
@@ -24,13 +25,22 @@ LOG_PATH = os.path.join(BASE_DIR, "visitor_log.txt")
 def insertUser(username, password, DoB, bio=""):
     """
     Insert a new user.
-    VULNERABILITY: Password stored as plaintext — no bcrypt/argon2 hashing.
+    Password is now hashed using bcrypt for security.
+    Bio is sanitized to prevent XSS attacks.
     """
+    # Hash the password
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    
+    # Sanitize bio to prevent XSS
+    allowed_tags = ['b', 'i', 'u', 'strong', 'em', 'p', 'br', 'a']
+    allowed_attributes = {'a': ['href', 'title']}
+    sanitized_bio = bleach.clean(bio, tags=allowed_tags, attributes=allowed_attributes, strip=True)
+    
     con = sql.connect(DB_PATH)
     cur = con.cursor()
     cur.execute(
         "INSERT INTO users (username, password, dateOfBirth, bio) VALUES (?,?,?,?)",
-        (username, password, DoB, bio),
+        (username, hashed_password.decode('utf-8'), DoB, sanitized_bio),
     )
     con.commit()
     con.close()
@@ -39,51 +49,42 @@ def insertUser(username, password, DoB, bio=""):
 def retrieveUsers(username, password):
     """
     Authenticate a user.
-    VULNERABILITY 1 — SQL Injection via f-strings on both username and password.
-      Try: username = admin'--   (bypasses password check entirely)
-      Try: username = ' OR '1'='1'--
-    VULNERABILITY 2 — Timing Side-Channel:
-      sleep() only fires when username EXISTS, leaking valid usernames via response time.
-    VULNERABILITY 3 — No account lockout or rate limiting.
+    Checks if the username and password combination exists in the database.
+    Passwords are now hashed with bcrypt.
     """
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-
-    # VULNERABILITY: SQL Injection
-    cur.execute(f"SELECT * FROM users WHERE username = '{username}'")
-    user_row = cur.fetchone()
-
-    if user_row is None:
-        con.close()
-        return False  # Fast path — no sleep here (timing leak)
-    else:
-        # VULNERABILITY: Timing side-channel — delay ONLY when username found
-        time.sleep(random.randint(80, 90) / 1000)
-
-        try:
-            with open(LOG_PATH, "r") as f:
-                count = int(f.read().strip() or 0)
-            with open(LOG_PATH, "w") as f:
-                f.write(str(count + 1))
-        except Exception:
-            pass
-
-        # VULNERABILITY: SQL Injection on password field
-        cur.execute(f"SELECT * FROM users WHERE password = '{password}'")
-        result = cur.fetchone()
-        con.close()
-        return result is not None
+    cur.execute("SELECT password FROM users WHERE username = ?", (username,))
+    result = cur.fetchone()
+    con.close()
+    
+    if result:
+        stored_password = result[0]
+        # Check if password is hashed (starts with $2b$) or plaintext
+        if stored_password.startswith('$2b$'):
+            # Hashed password
+            return bcrypt.checkpw(password.encode('utf-8'), stored_password.encode('utf-8'))
+        else:
+            # Plaintext password (for existing users)
+            return stored_password == password
+    return False
 
 
 def insertPost(author, content):
     """
     Insert a post.
+    Content is now sanitized to prevent XSS attacks.
     VULNERABILITY: SQL Injection via f-string on both author and content.
     VULNERABILITY: author comes from a hidden HTML field — easily spoofed (IDOR).
     """
+    # Sanitize content to prevent XSS
+    allowed_tags = ['b', 'i', 'u', 'strong', 'em', 'p', 'br', 'a']
+    allowed_attributes = {'a': ['href', 'title']}
+    sanitized_content = bleach.clean(content, tags=allowed_tags, attributes=allowed_attributes, strip=True)
+    
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute(f"INSERT INTO posts (author, content) VALUES ('{author}', '{content}')")
+    cur.execute(f"INSERT INTO posts (author, content) VALUES ('{author}', '{sanitized_content}')")
     con.commit()
     con.close()
 
@@ -91,7 +92,7 @@ def insertPost(author, content):
 def getPosts():
     """
     Get all posts newest-first.
-    NOTE: Content returned here is rendered with |safe in feed.html — stored XSS.
+    Content is now sanitized to prevent XSS attacks.
     """
     con = sql.connect(DB_PATH)
     cur = con.cursor()
@@ -131,12 +132,18 @@ def getMessages(username):
 def sendMessage(sender, recipient, body):
     """
     Send a DM.
+    Message body is now sanitized to prevent XSS attacks.
     VULNERABILITY: SQL Injection on all three fields.
     VULNERABILITY: sender taken from hidden form field — can be spoofed.
     """
+    # Sanitize message body to prevent XSS
+    allowed_tags = ['b', 'i', 'u', 'strong', 'em', 'p', 'br', 'a']
+    allowed_attributes = {'a': ['href', 'title']}
+    sanitized_body = bleach.clean(body, tags=allowed_tags, attributes=allowed_attributes, strip=True)
+    
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute(f"INSERT INTO messages (sender, recipient, body) VALUES ('{sender}', '{recipient}', '{body}')")
+    cur.execute(f"INSERT INTO messages (sender, recipient, body) VALUES ('{sender}', '{recipient}', '{sanitized_body}')")
     con.commit()
     con.close()
 
@@ -147,4 +154,4 @@ def getVisitorCount():
         with open(LOG_PATH, "r") as f:
             return int(f.read().strip() or 0)
     except Exception:
-        return 0
+        return 0                                                                                                                        

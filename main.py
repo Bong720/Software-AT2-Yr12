@@ -2,13 +2,11 @@ import os
 import sys
 import sqlite3
 import subprocess
-from flask import Flask, render_template, request, redirect
+from flask import Flask, render_template, request, redirect, session
 from flask_cors import CORS
 import user_management as db
 
 # ── Auto-bootstrap the database on every startup ──────────────────────────────
-# This ensures students never see "no such table" even if setup_db.py
-# was never manually run, or if the .db file is missing / corrupted.
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 DB_PATH      = os.path.join(BASE_DIR, "database_files", "database.db")
 SETUP_SCRIPT = os.path.join(BASE_DIR, "database_files", "setup_db.py")
@@ -52,6 +50,17 @@ CORS(app)
 # VULNERABILITY: Hardcoded secret key — session cookies can be forged
 app.secret_key = "supersecretkey123"
 
+def is_password_strong(password):
+    """Check if password meets minimum strength requirements."""
+    if len(password) < 8:
+        return False
+    if not any(c.isupper() for c in password):
+        return False
+    if not any(c.islower() for c in password):
+        return False
+    if not any(c.isdigit() for c in password):
+        return False
+    return True
 
 # ── Home / Login ──────────────────────────────────────────────────────────────
 
@@ -61,6 +70,10 @@ def home():
     # VULNERABILITY: Open Redirect — blindly follows 'url' query parameter
     if request.method == "GET" and request.args.get("url"):
         return redirect(request.args.get("url"), code=302)
+
+    # Check if user is already logged in
+    if 'logged_in' in session and session['logged_in']:
+        return redirect("/feed.html")
 
     # VULNERABILITY: Reflected XSS — 'msg' rendered with |safe in template
     if request.method == "GET":
@@ -72,8 +85,9 @@ def home():
         password = request.form["password"]
         isLoggedIn = db.retrieveUsers(username, password)
         if isLoggedIn:
-            posts = db.getPosts()
-            return render_template("feed.html", username=username, state=isLoggedIn, posts=posts)
+            session['username'] = username
+            session['logged_in'] = True
+            return redirect("/feed.html")
         else:
             return render_template("index.html", msg="Invalid credentials. Please try again.")
 
@@ -90,8 +104,8 @@ def signup():
         password = request.form["password"]
         DoB      = request.form["dob"]
         bio      = request.form.get("bio", "")
-        # VULNERABILITY: No duplicate username check
-        # VULNERABILITY: No input validation or password strength enforcement
+        if not is_password_strong(password):
+            return render_template("signup.html", msg="Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, and one digit.")
         db.insertUser(username, password, DoB, bio)
         return render_template("index.html", msg="Account created! Please log in.")
     else:
@@ -102,30 +116,38 @@ def signup():
 
 @app.route("/feed.html", methods=["POST", "GET"])
 def feed():
+    if 'logged_in' not in session or not session['logged_in']:
+        return redirect("/", code=302)
+
+    username = session['username']
+
     if request.method == "GET" and request.args.get("url"):
         return redirect(request.args.get("url"), code=302)
 
     if request.method == "POST":
         post_content = request.form["content"]
         # VULNERABILITY: IDOR — username from hidden form field, can be tampered with
-        username = request.form.get("username", "Anonymous")
+        # But now using session, so override with session username
         db.insertPost(username, post_content)
         posts = db.getPosts()
         return render_template("feed.html", username=username, state=True, posts=posts)
     else:
         posts = db.getPosts()
-        return render_template("feed.html", username="Guest", state=True, posts=posts)
+        return render_template("feed.html", username=username, state=True, posts=posts)
 
 
 # ── User Profile ──────────────────────────────────────────────────────────────
 
 @app.route("/profile")
 def profile():
+    if 'logged_in' not in session or not session['logged_in']:
+        return redirect("/", code=302)
+
     # VULNERABILITY: No authentication check — any visitor can read any profile
     # VULNERABILITY: SQL Injection via 'user' parameter in getUserProfile()
     if request.args.get("url"):
         return redirect(request.args.get("url"), code=302)
-    username = request.args.get("user", "")
+    username = request.args.get("user", session['username'])
     profile_data = db.getUserProfile(username)
     return render_template("profile.html", profile=profile_data, username=username)
 
@@ -134,16 +156,19 @@ def profile():
 
 @app.route("/messages", methods=["POST", "GET"])
 def messages():
+    if 'logged_in' not in session or not session['logged_in']:
+        return redirect("/", code=302)
+
     # VULNERABILITY: No authentication — change ?user= to read anyone's inbox
     if request.method == "POST":
-        sender    = request.form.get("sender", "Anonymous")
+        sender    = session['username']
         recipient = request.form.get("recipient", "")
         body      = request.form.get("body", "")
         db.sendMessage(sender, recipient, body)
-        msgs = db.getMessages(recipient)
+        msgs = db.getMessages(session['username'])
         return render_template("messages.html", messages=msgs, username=sender, recipient=recipient)
     else:
-        username = request.args.get("user", "Guest")
+        username = session['username']
         msgs = db.getMessages(username)
         return render_template("messages.html", messages=msgs, username=username, recipient=username)
 
@@ -156,9 +181,17 @@ def success():
     return render_template("success.html", msg=msg)
 
 
+# ── Logout ────────────────────────────────────────────────────────────────────
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="127.0.0.1", port=5000)
