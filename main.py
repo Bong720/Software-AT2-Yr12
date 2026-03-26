@@ -45,10 +45,8 @@ init_db()
 
 app = Flask(__name__)
 
-# VULNERABILITY: Wildcard CORS — allows ANY origin to make credentialed requests
 CORS(app)
 
-# VULNERABILITY: Hardcoded secret key — session cookies can be forged
 app.secret_key = "supersecretkey123"
 
 def is_password_strong(password):
@@ -64,12 +62,29 @@ def is_password_strong(password):
     return True
 
 def is_valid_date(date_str):
-    """Check if the date string is a valid date in DD/MM/YYYY format."""
-    try:
-        datetime.strptime(date_str, '%d/%m/%Y')
-        return True
-    except ValueError:
+    """Check if the date string represents a real date and is a valid past DOB."""
+    dob = None
+    for fmt in ('%d/%m/%Y', '%Y-%m-%d'):
+        try:
+            dob = datetime.strptime(date_str, fmt).date()
+            break
+        except ValueError:
+            continue
+
+    if dob is None:
         return False
+
+    today = datetime.utcnow().date()
+    if dob >= today:
+        # DOB must be in the past
+        return False
+
+    # Age sanity checks
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < 13 or age > 130:
+        return False
+
+    return True
 
 # ── Home / Login ──────────────────────────────────────────────────────────────
 
@@ -117,7 +132,12 @@ def signup():
             return render_template("signup.html", msg="Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, and one digit.")
         if not is_valid_date(DoB):
             return render_template("signup.html", msg="Please enter a valid date of birth in DD/MM/YYYY format.")
-        db.insertUser(username, password, DoB, bio)
+        if db.username_exists(username):
+            return render_template("signup.html", msg="Username already exists. Please choose another username.")
+
+        if not db.insertUser(username, password, DoB, bio):
+            return render_template("signup.html", msg="Username already exists or invalid input.")
+
         return render_template("index.html", msg="Account created! Please log in.")
     else:
         return render_template("signup.html")

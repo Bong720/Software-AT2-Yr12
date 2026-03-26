@@ -22,12 +22,26 @@ DB_PATH  = os.path.join(BASE_DIR, "database_files", "database.db")
 LOG_PATH = os.path.join(BASE_DIR, "visitor_log.txt")
 
 
+def username_exists(username):
+    """Return True if username is already taken."""
+    con = sql.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+    exists = cur.fetchone() is not None
+    con.close()
+    return exists
+
+
 def insertUser(username, password, DoB, bio=""):
     """
     Insert a new user.
     Password is now hashed using bcrypt for security.
     Bio is sanitized to prevent XSS attacks.
+    Returns True on success, False on failure.
     """
+    if username_exists(username):
+        return False
+
     # Hash the password
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
     
@@ -36,14 +50,19 @@ def insertUser(username, password, DoB, bio=""):
     allowed_attributes = {'a': ['href', 'title']}
     sanitized_bio = bleach.clean(bio, tags=allowed_tags, attributes=allowed_attributes, strip=True)
     
-    con = sql.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute(
-        "INSERT INTO users (username, password, dateOfBirth, bio) VALUES (?,?,?,?)",
-        (username, hashed_password.decode('utf-8'), DoB, sanitized_bio),
-    )
-    con.commit()
-    con.close()
+    try:
+        con = sql.connect(DB_PATH)
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO users (username, password, dateOfBirth, bio) VALUES (?,?,?,?)",
+            (username, hashed_password.decode('utf-8'), DoB, sanitized_bio),
+        )
+        con.commit()
+        return True
+    except sql.IntegrityError:
+        return False
+    finally:
+        con.close()
 
 
 def retrieveUsers(username, password):
