@@ -27,6 +27,7 @@
         VULNERABILITY: No check that 'recipient' exists in the database.
       -->
       <form action="/messages" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="sender" value="{{ username }}" />
         <div class="form-group">
           <label for="recipient">To</label>
@@ -41,10 +42,7 @@
         </div>
         <div class="form-group">
           <label for="body">Message</label>
-          <!--
-            VULNERABILITY: Message body is rendered with |safe in the inbox view below.
-            Stored XSS via direct message — attacker can target a specific user.
-          -->
+          <!-- XSS PREVENTION: Message body is sanitized on input (all HTML tags are stripped). -->
           <textarea id="body" name="body" placeholder="Write your message..." required></textarea>
         </div>
         <div class="compose-footer">
@@ -55,11 +53,7 @@
 
     <h2 style="margin-bottom:1rem;">
       Inbox for
-      <!--
-        VULNERABILITY: Username from URL parameter rendered with |safe — reflected XSS.
-        /messages?user=<script>alert(1)</script>
-      -->
-      <span class="text-accent">{{ username | safe }}</span>
+      <span class="text-accent">{{ username }}</span>
     </h2>
     <p class="text-muted mb-2" style="font-size:0.82rem;">
       ⚠️  No authentication required to view this inbox — change the <code>?user=</code> parameter to read anyone's messages.
@@ -74,9 +68,10 @@
           &mdash; <span>{{ msg[4] }}</span>
           {% endif %}
         </div>
-        <!--
-          Message body is now sanitized on input to prevent XSS attacks.
-          Basic HTML tags like <b>, <i>, <p> are allowed for formatting.
+        <!-- 
+          XSS PREVENTION:
+          Message body is sanitized on input (all HTML tags stripped).
+          Jinja2 auto-escapes output by default, preventing any injected scripts.
         -->
         <div class="msg-body">{{ msg[3] }}</div>
       </div>

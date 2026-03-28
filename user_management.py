@@ -65,6 +65,16 @@ def insertUser(username, password, DoB, bio=""):
         con.close()
 
 
+def username_exists(username):
+    """Return True if username is already registered."""
+    con = sql.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+    exists = cur.fetchone() is not None
+    con.close()
+    return exists
+
+
 def retrieveUsers(username, password):
     """
     Authenticate a user.
@@ -151,14 +161,14 @@ def getMessages(username):
 def sendMessage(sender, recipient, body):
     """
     Send a DM.
-    Message body is now sanitized to prevent XSS attacks.
+    Message body is sanitized to prevent stored XSS attacks.
+    No HTML tags are allowed — only plain text is stored.
     VULNERABILITY: SQL Injection on all three fields.
     VULNERABILITY: sender taken from hidden form field — can be spoofed.
     """
-    # Sanitize message body to prevent XSS
-    allowed_tags = ['b', 'i', 'u', 'strong', 'em', 'p', 'br', 'a']
-    allowed_attributes = {'a': ['href', 'title']}
-    sanitized_body = bleach.clean(body, tags=allowed_tags, attributes=allowed_attributes, strip=True)
+    # Sanitize message body by stripping ALL HTML tags to prevent stored XSS
+    # This is more secure than allowing specific tags
+    sanitized_body = bleach.clean(body, tags=[], strip=True)
     
     con = sql.connect(DB_PATH)
     cur = con.cursor()

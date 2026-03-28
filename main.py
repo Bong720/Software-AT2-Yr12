@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, session
 from flask_cors import CORS
+from flask_wtf.csrf import CSRFProtect
 import user_management as db
 
 # ── Auto-bootstrap the database on every startup ──────────────────────────────
@@ -48,6 +49,10 @@ app = Flask(__name__)
 CORS(app)
 
 app.secret_key = "supersecretkey123"
+app.config["WTF_CSRF_ENABLED"] = True
+app.config["WTF_CSRF_TIME_LIMIT"] = None  # optional: no expiry for demo
+
+csrf = CSRFProtect(app)
 
 def is_password_strong(password):
     """Check if password meets minimum strength requirements."""
