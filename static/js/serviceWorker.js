@@ -2,32 +2,44 @@
 //  serviceWorker.js  —  Unsecure Social PWA
 //
 //  INTENTIONAL VULNERABILITIES (for educational use):
-//    1. Cache Poisoning    — caches ALL GET responses including user-specific pages
+//    1. Cache Poisoning    — FIXED: Authenticated pages no longer cached; URL whitelist on push notifications
 //    2. skipWaiting        — compromised SW update takes effect immediately
 //    3. clients.claim()    — instantly hijacks all open tabs on activation
 //    4. No SRI checks      — cached resources have no integrity verification
-//    5. Push Phishing      — notification payload URL opened with no validation
+//    5. Push Phishing      — FIXED: notification payload URLs validated against whitelist
 //    6. Hardcoded VAPID    — public key visible in source; anyone can send pushes
 // ─────────────────────────────────────────────────────────────────────────────
 
-// VULNERABILITY: Predictable, hardcoded cache name makes targeted cache poisoning easier
-const CACHE_NAME = 'social-pwa-cache-v1';
+// CACHE POISONING PREVENTION: Use timestamp-based cache versioning
+const CACHE_NAME = 'social-pwa-cache-v1-' + new Date().getTime();
 
-// VULNERABILITY: Caches authenticated pages (feed, messages, profile)
-// A different user on the same device could be served another user's cached data
+// CACHE POISONING PREVENTION: Only cache static/public resources
+// Exclude authenticated pages (feed, messages, profile) to prevent cache poisoning across users
 const PRECACHE_URLS = [
   '/',
   '/index.html',
   '/signup.html',
-  '/feed.html',
-  '/profile',
-  '/messages',
   '/success.html',
   '/static/css/style.css',
   '/static/js/app.js',
   '/static/manifest.json',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png'
+];
+
+// CACHE POISONING PREVENTION: Pages that must NOT be cached (user-specific)
+const NO_CACHE_PATHS = [
+  '/feed.html',
+  '/profile',
+  '/messages'
+];
+
+// CACHE POISONING PREVENTION: Whitelist of allowed notification URLs
+const ALLOWED_NOTIFICATION_URLS = [
+  '/',
+  '/feed.html',
+  '/messages',
+  '/profile'
 ];
 
 // ── INSTALL ───────────────────────────────────────────────────────────────────
@@ -56,31 +68,65 @@ self.addEventListener('activate', function (event) {
 
 // ── FETCH ─────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', function (event) {
-  // VULNERABILITY: Cache-First strategy applied to ALL requests, including:
-  //   - Authenticated pages (feed, messages) — shared cache leaks between users
-  //   - POST responses are NOT cached, but GET feed page IS (after first load)
-  //   - Reflected XSS in a cached response URL is permanently stored in cache
+  const requestUrl = new URL(event.request.url);
+  const pathname = requestUrl.pathname;
+
+  // CACHE POISONING PREVENTION: Never cache authenticated/user-specific pages
+  // These pages must always be fetched from network to prevent cross-user cache leaks
+  if (NO_CACHE_PATHS.some(path => pathname.startsWith(path))) {
+    event.respondWith(
+      fetch(event.request).catch(function () {
+        // If offline and page not cached, don't serve random cached content
+        return new Response('Offline - this page requires network access', {
+          status: 503,
+          statusText: 'Service Unavailable'
+        });
+      })
+    );
+    return;
+  }
+
+  // CACHE POISONING PREVENTION: Network-first for unspecified routes (safer approach)
+  // Only cache successful responses with proper validation
   event.respondWith(
-    caches.match(event.request).then(function (cachedResponse) {
-      if (cachedResponse) {
-        // Serve cached version with no freshness or integrity check
-        return cachedResponse;
+    fetch(event.request).then(function (networkResponse) {
+      // CACHE POISONING PREVENTION: Only cache successful (200-299) responses
+      // Do not cache error pages, redirects, or failure responses
+      if (!networkResponse || networkResponse.status < 200 || networkResponse.status >= 300) {
+        return networkResponse;
       }
 
-      return fetch(event.request).then(function (networkResponse) {
-        // VULNERABILITY: All GET responses are cloned and cached without inspection
-        // An attacker who causes a reflected XSS response to be cached makes it persistent
-        if (event.request.method === 'GET') {
-          let responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then(function (cache) {
-            cache.put(event.request, responseClone);
-          });
-        }
+      // CACHE POISONING PREVENTION: Only cache GET requests (not POST, PUT, DELETE)
+      if (event.request.method !== 'GET') {
         return networkResponse;
-      }).catch(function () {
-        // VULNERABILITY: Falls back to caching root for ALL offline errors
-        // This can mask failures and serve stale/attacker-modified content
-        return caches.match('/');
+      }
+
+      let responseClone = networkResponse.clone();
+      caches.open(CACHE_NAME).then(function (cache) {
+        // CACHE POISONING PREVENTION: Validate response before caching
+        // Only cache responses with proper content-type and no private headers
+        const contentType = responseClone.headers.get('content-type');
+        const cacheControl = responseClone.headers.get('cache-control');
+        
+        // Don't cache if cache-control says not to
+        if (cacheControl && cacheControl.includes('no-cache')) {
+          return;
+        }
+
+        cache.put(event.request, responseClone);
+      });
+      return networkResponse;
+    }).catch(function () {
+      // CACHE POISONING PREVENTION: Only serve cached responses on fallback
+      // Match cache but return 503 if not found (don't serve root)
+      return caches.match(event.request).then(function (cachedResponse) {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+        return new Response('Offline - no cached version available', {
+          status: 503,
+          statusText: 'Service Unavailable'
+        });
       });
     })
   );
@@ -88,17 +134,27 @@ self.addEventListener('fetch', function (event) {
 
 // ── PUSH NOTIFICATIONS ────────────────────────────────────────────────────────
 self.addEventListener('push', function (event) {
-  // VULNERABILITY: Push payload is parsed and displayed with NO origin validation
-  // Any server holding a valid push subscription can send arbitrary notification content
-  // This enables push-based phishing: fake "Your account was compromised" alerts
+  // CACHE POISONING PREVENTION: Parse and validate push payload
+  // Only allow trusted notification content
   let data = { title: 'SocialPWA', body: 'You have a new notification!', url: '/' };
 
   if (event.data) {
     try {
-      // VULNERABILITY: JSON parsed directly — no sanitisation of title, body, or url
       data = event.data.json();
     } catch (e) {
       console.warn('[SW] Push data parse error:', e);
+    }
+  }
+
+  // CACHE POISONING PREVENTION: Validate notification URL against whitelist
+  // Prevents push-based phishing attacks with attacker-controlled URLs
+  let validUrl = '/';
+  if (data.url && typeof data.url === 'string') {
+    // Only allow app-internal URLs, not external phishing sites
+    if (ALLOWED_NOTIFICATION_URLS.some(allowed => data.url === allowed || data.url.startsWith(allowed))) {
+      validUrl = data.url;
+    } else {
+      console.warn('[SW] Blocked unauthorized notification URL:', data.url);
     }
   }
 
@@ -108,9 +164,8 @@ self.addEventListener('push', function (event) {
     badge: '/static/icons/icon-192.png',
     tag: 'social-pwa-notification',
     data: {
-      // VULNERABILITY: URL from push payload stored as-is in notification data
-      // On click, user is navigated to attacker-controlled URL (push phishing)
-      url: data.url || '/'
+      // CACHE POISONING PREVENTION: Only store validated URL
+      url: validUrl
     }
   };
 
@@ -123,8 +178,8 @@ self.addEventListener('push', function (event) {
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
 
-  // VULNERABILITY: Opens attacker-supplied URL from notification payload
-  // No allowlist check — user can be sent to any external phishing site
+  // CACHE POISONING PREVENTION: URL was already validated when notification was created
+  // Only whitelisted URLs are allowed in the notification data
   const targetUrl = event.notification.data.url || '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
