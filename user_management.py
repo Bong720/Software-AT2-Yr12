@@ -11,7 +11,7 @@ import bleach
 #
 #  INTENTIONAL VULNERABILITIES (for educational use):
 #    1. SQL Injection      — f-string queries throughout
-#    2. Timing side-channel — sleep only fires when username EXISTS
+#    2. Timing side-channel — FIXED: Always performs bcrypt comparison for consistent timing
 #    3. No input validation — any string accepted as username/password
 #    4. IDOR-equivalent    — username passed from client-side hidden field
 # ─────────────────────────────────────────────────────────────────────────────
@@ -79,7 +79,8 @@ def retrieveUsers(username, password):
     """
     Authenticate a user.
     Checks if the username and password combination exists in the database.
-    Passwords are now hashed with bcrypt.
+    Passwords are hashed with bcrypt.
+    TIMING ATTACK PREVENTION: Always performs bcrypt comparison regardless of user existence.
     """
     con = sql.connect(DB_PATH)
     cur = con.cursor()
@@ -87,23 +88,41 @@ def retrieveUsers(username, password):
     result = cur.fetchone()
     con.close()
     
+    # TIMING ATTACK PREVENTION: Use a dummy hash if user doesn't exist
+    # This ensures bcrypt comparison takes the same time regardless of username validity
+    dummy_hash = bcrypt.hashpw(b'dummy_password', bcrypt.gensalt())
+    
     if result:
         stored_password = result[0]
         # Check if password is hashed (starts with $2b$) or plaintext
         if stored_password.startswith('$2b$'):
-            # Hashed password
-            return bcrypt.checkpw(password.encode('utf-8'), stored_password.encode('utf-8'))
+            # Hashed password - use constant-time comparison
+            try:
+                return bcrypt.checkpw(password.encode('utf-8'), stored_password.encode('utf-8'))
+            except (ValueError, TypeError):
+                # Invalid hash format - always return False
+                return False
         else:
-            # Plaintext password (for existing users)
-            return stored_password == password
-    return False
+            # Plaintext password (legacy support) - still perform bcrypt for timing consistency
+            is_match = stored_password == password
+            # Perform dummy bcrypt to maintain constant timing
+            bcrypt.checkpw(password.encode('utf-8'), dummy_hash)
+            return is_match
+    else:
+        # TIMING ATTACK PREVENTION: If user not found, still perform bcrypt comparison
+        # This makes the response time identical to when user exists but password is wrong
+        try:
+            bcrypt.checkpw(password.encode('utf-8'), dummy_hash)
+        except (ValueError, TypeError):
+            pass
+        return False
 
 
 def insertPost(author, content):
     """
     Insert a post.
     Content is now sanitized to prevent XSS attacks.
-    VULNERABILITY: SQL Injection via f-string on both author and content.
+    FIXED: Uses parameterized queries (?) to prevent SQL Injection.
     VULNERABILITY: author comes from a hidden HTML field — easily spoofed (IDOR).
     """
     # Sanitize content to prevent XSS
@@ -113,7 +132,8 @@ def insertPost(author, content):
     
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute(f"INSERT INTO posts (author, content) VALUES ('{author}', '{sanitized_content}')")
+    # FIXED: Using parameterized query with ? placeholders
+    cur.execute("INSERT INTO posts (author, content) VALUES (?, ?)", (author, sanitized_content))
     con.commit()
     con.close()
 
@@ -133,12 +153,13 @@ def getPosts():
 def getUserProfile(username):
     """
     Get a user profile row.
-    VULNERABILITY: SQL Injection via f-string — try /profile?user=admin'--
+    FIXED: Uses parameterized queries (?) to prevent SQL Injection.
     VULNERABILITY: No authentication check — any visitor can view any profile.
     """
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute(f"SELECT id, username, dateOfBirth, bio, role FROM users WHERE username = '{username}'")
+    # FIXED: Using parameterized query with ? placeholders
+    cur.execute("SELECT id, username, dateOfBirth, bio, role FROM users WHERE username = ?", (username,))
     row = cur.fetchone()
     con.close()
     return row
@@ -147,12 +168,13 @@ def getUserProfile(username):
 def getMessages(username):
     """
     Get inbox for a user.
-    VULNERABILITY: SQL Injection via f-string.
+    FIXED: Uses parameterized queries (?) to prevent SQL Injection.
     VULNERABILITY: No auth check — change ?user= to read anyone's inbox.
     """
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute(f"SELECT * FROM messages WHERE recipient = '{username}' ORDER BY id DESC")
+    # FIXED: Using parameterized query with ? placeholders
+    cur.execute("SELECT * FROM messages WHERE recipient = ? ORDER BY id DESC", (username,))
     rows = cur.fetchall()
     con.close()
     return rows
@@ -163,7 +185,7 @@ def sendMessage(sender, recipient, body):
     Send a DM.
     Message body is sanitized to prevent stored XSS attacks.
     No HTML tags are allowed — only plain text is stored.
-    VULNERABILITY: SQL Injection on all three fields.
+    FIXED: Uses parameterized queries (?) to prevent SQL Injection.
     VULNERABILITY: sender taken from hidden form field — can be spoofed.
     """
     # Sanitize message body by stripping ALL HTML tags to prevent stored XSS
@@ -172,7 +194,8 @@ def sendMessage(sender, recipient, body):
     
     con = sql.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute(f"INSERT INTO messages (sender, recipient, body) VALUES ('{sender}', '{recipient}', '{sanitized_body}')")
+    # FIXED: Using parameterized query with ? placeholders
+    cur.execute("INSERT INTO messages (sender, recipient, body) VALUES (?, ?, ?)", (sender, recipient, sanitized_body))
     con.commit()
     con.close()
 
