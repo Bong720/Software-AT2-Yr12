@@ -104,9 +104,10 @@ def home():
     if 'logged_in' in session and session['logged_in']:
         return redirect("/feed.html")
 
-    # VULNERABILITY: Reflected XSS — 'msg' rendered with |safe in template
+    # XSS PREVENTION: 'msg' is auto-escaped in template
     if request.method == "GET":
         msg = request.args.get("msg", "")
+        # No need to sanitize here since Jinja2 auto-escaping is enabled
         return render_template("index.html", msg=msg)
 
     elif request.method == "POST":

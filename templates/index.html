@@ -7,14 +7,12 @@
   <p class="subtitle">Log in to your SocialPWA account to see the latest posts.</p>
 
   <!--
-    VULNERABILITY: Reflected XSS
-    The 'msg' variable is rendered with the |safe filter — Jinja2 auto-escaping is disabled.
-    An attacker can craft a link like:
-      /?msg=<script>alert(document.cookie)</script>
-    and the script will execute in the victim's browser.
+    XSS PREVENTION: Reflected XSS fixed
+    The 'msg' variable is now rendered with auto-escaping enabled (default).
+    Special characters are escaped to prevent script injection.
   -->
   {% if msg %}
-  <div class="msg-box" id="js-msg-box">{{ msg | safe }}</div>
+  <div class="msg-box" id="js-msg-box">{{ msg }}</div>
   {% else %}
   <div id="js-msg-box" style="display:none;"></div>
   {% endif %}
