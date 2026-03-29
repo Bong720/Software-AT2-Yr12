@@ -180,13 +180,18 @@ def profile():
     if 'logged_in' not in session or not session['logged_in']:
         return redirect("/", code=302)
 
-    # VULNERABILITY: No authentication check — any visitor can read any profile
-    # VULNERABILITY: SQL Injection via 'user' parameter in getUserProfile()
+    # IDOR PREVENTION: Only allow users to view their own profile
     if request.args.get("url"):
         return redirect(request.args.get("url"), code=302)
-    username = request.args.get("user", session['username'])
-    profile_data = db.getUserProfile(username)
-    return render_template("profile.html", profile=profile_data, username=username)
+    
+    requested_user = request.args.get("user", session['username'])
+    
+    # Enforce authorization: users can only view their own profile
+    if requested_user != session['username']:
+        return render_template("profile.html", profile=None, username=requested_user, error="You can only view your own profile.")
+    
+    profile_data = db.getUserProfile(requested_user)
+    return render_template("profile.html", profile=profile_data, username=requested_user)
 
 
 # ── Direct Messages ───────────────────────────────────────────────────────────
@@ -196,7 +201,7 @@ def messages():
     if 'logged_in' not in session or not session['logged_in']:
         return redirect("/", code=302)
 
-    # VULNERABILITY: No authentication — change ?user= to read anyone's inbox
+    # IDOR PREVENTION: Users can only view their own inbox
     if request.method == "POST":
         sender    = session['username']
         recipient = request.form.get("recipient", "")
@@ -205,6 +210,7 @@ def messages():
         msgs = db.getMessages(session['username'])
         return render_template("messages.html", messages=msgs, username=sender, recipient=recipient)
     else:
+        # User can only view their own inbox
         username = session['username']
         msgs = db.getMessages(username)
         return render_template("messages.html", messages=msgs, username=username, recipient=username)
@@ -214,6 +220,7 @@ def messages():
 
 @app.route("/success.html")
 def success():
+    # XSS PREVENTION: 'msg' is auto-escaped in template
     msg = request.args.get("msg", "Your action was completed successfully.")
     return render_template("success.html", msg=msg)
 

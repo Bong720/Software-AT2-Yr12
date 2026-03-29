@@ -4,7 +4,14 @@
 {% block content %}
 <div class="profile-page-card">
 
-  {% if profile %}
+  {% if error %}
+  <div class="msg-box" style="background-color:var(--danger); color:white; text-align:center;">
+    {{ error }}
+  </div>
+  <div class="mt-3">
+    <a href="/feed.html" class="btn btn-secondary">← Back to Feed</a>
+  </div>
+  {% elif profile %}
   <div class="big-avatar">{{ profile[1][0] | upper }}</div>
   <h1 style="margin-bottom:0.2rem;">{{ profile[1] }}</h1>
   <p class="text-muted" style="margin-bottom:1.5rem;">@{{ profile[1] | lower }}</p>
@@ -18,23 +25,11 @@
   </p>
 
   <div class="profile-stat">
-    <span class="label">User ID</span>
-    <!--
-      VULNERABILITY: Exposes internal database row ID — aids IDOR attacks.
-      Attacker can enumerate /profile?id=1, /profile?id=2 to discover all users.
-    -->
-    <span class="value">{{ profile[0] }}</span>
-  </div>
-  <div class="profile-stat">
     <span class="label">Username</span>
     <span class="value">{{ profile[1] }}</span>
   </div>
   <div class="profile-stat">
     <span class="label">Date of Birth</span>
-    <!--
-      VULNERABILITY: Date of birth is exposed on a publicly accessible profile page
-      with no authentication check required to view it.
-    -->
     <span class="value">{{ profile[2] if profile[2] else "Not set" }}</span>
   </div>
   <div class="profile-stat">
